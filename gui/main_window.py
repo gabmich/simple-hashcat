@@ -1,5 +1,6 @@
 """
 Main window for the password cracker GUI.
+Modern 3-column layout with collapsible log panel.
 """
 
 import os
@@ -9,15 +10,299 @@ from PySide6.QtWidgets import (
     QGroupBox, QLabel, QPushButton, QLineEdit, QComboBox,
     QTextEdit, QProgressBar, QFileDialog, QSpinBox, QCheckBox,
     QRadioButton, QButtonGroup, QMessageBox, QSplitter, QFrame,
-    QStatusBar, QToolBar, QSizePolicy
+    QStatusBar, QSizePolicy, QGridLayout
 )
-from PySide6.QtCore import Qt, QThread, Signal, Slot, QTimer
-from PySide6.QtGui import QAction, QFont, QIcon
+from PySide6.QtCore import Qt, QThread, Signal, Slot, QPropertyAnimation, QEasingCurve
+from PySide6.QtGui import QAction, QFont
 
 from core.hash_extractor import HashExtractor, HashResult, FileType
 from core.cracker_base import CrackConfig, CrackProgress, CrackStatus, AttackMode, CrackerBackend
 from core.john_backend import JohnBackend
 from core.hashcat_backend import HashcatBackend
+
+
+# Modern light theme stylesheet
+STYLE_SHEET = """
+QMainWindow {
+    background-color: #f5f5f5;
+}
+
+QGroupBox {
+    font-weight: bold;
+    font-size: 12px;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    margin-top: 14px;
+    padding: 12px 8px 8px 8px;
+    background-color: #ffffff;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 6px;
+    color: #333333;
+}
+
+QPushButton {
+    background-color: #f0f0f0;
+    border: 1px solid #cccccc;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+QPushButton:hover {
+    background-color: #e0e0e0;
+}
+
+QPushButton:pressed {
+    background-color: #d0d0d0;
+}
+
+QPushButton:disabled {
+    background-color: #f5f5f5;
+    color: #aaaaaa;
+}
+
+QPushButton#startBtn {
+    background-color: #4CAF50;
+    color: white;
+    font-weight: bold;
+    font-size: 13px;
+    border: none;
+    border-radius: 6px;
+    padding: 14px 24px;
+}
+
+QPushButton#startBtn:hover {
+    background-color: #43A047;
+}
+
+QPushButton#startBtn:pressed {
+    background-color: #388E3C;
+}
+
+QPushButton#startBtn:disabled {
+    background-color: #C8E6C9;
+    color: #81C784;
+}
+
+QPushButton#stopBtn {
+    background-color: #f44336;
+    color: white;
+    font-weight: bold;
+    font-size: 13px;
+    border: none;
+    border-radius: 6px;
+    padding: 14px 24px;
+}
+
+QPushButton#stopBtn:hover {
+    background-color: #E53935;
+}
+
+QPushButton#stopBtn:pressed {
+    background-color: #D32F2F;
+}
+
+QPushButton#stopBtn:disabled {
+    background-color: #FFCDD2;
+    color: #EF9A9A;
+}
+
+QPushButton#toggleLogBtn {
+    background-color: transparent;
+    border: none;
+    color: #666666;
+    font-size: 11px;
+    padding: 4px 8px;
+}
+
+QPushButton#toggleLogBtn:hover {
+    color: #333333;
+    background-color: #e8e8e8;
+    border-radius: 4px;
+}
+
+QPushButton#copyBtn {
+    background-color: #2196F3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 16px;
+    font-weight: bold;
+}
+
+QPushButton#copyBtn:hover {
+    background-color: #1E88E5;
+}
+
+QLineEdit {
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 8px;
+    background-color: #ffffff;
+    font-size: 12px;
+}
+
+QLineEdit:focus {
+    border-color: #2196F3;
+}
+
+QLineEdit:read-only {
+    background-color: #fafafa;
+}
+
+QLineEdit#passwordResult {
+    background-color: #E8F5E9;
+    font-size: 15px;
+    font-weight: bold;
+    padding: 10px;
+    border: 2px solid #4CAF50;
+    border-radius: 6px;
+    color: #2E7D32;
+}
+
+QLineEdit#commandDisplay {
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 11px;
+    background-color: #263238;
+    color: #ECEFF1;
+    border: none;
+    border-radius: 4px;
+    padding: 8px;
+}
+
+QTextEdit {
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    background-color: #ffffff;
+    font-size: 12px;
+}
+
+QTextEdit#hashDisplay {
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 11px;
+    background-color: #fafafa;
+}
+
+QTextEdit#logDisplay {
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 11px;
+    background-color: #263238;
+    color: #B0BEC5;
+    border: none;
+    border-radius: 4px;
+}
+
+QComboBox {
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 6px 10px;
+    background-color: #ffffff;
+    font-size: 12px;
+}
+
+QComboBox:hover {
+    border-color: #2196F3;
+}
+
+QComboBox::drop-down {
+    border: none;
+    padding-right: 8px;
+}
+
+QSpinBox {
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 6px;
+    background-color: #ffffff;
+}
+
+QProgressBar {
+    border: none;
+    border-radius: 6px;
+    background-color: #E0E0E0;
+    text-align: center;
+    font-weight: bold;
+    font-size: 11px;
+}
+
+QProgressBar::chunk {
+    background-color: #4CAF50;
+    border-radius: 6px;
+}
+
+QRadioButton {
+    font-size: 12px;
+    spacing: 8px;
+}
+
+QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+}
+
+QCheckBox {
+    font-size: 12px;
+    spacing: 8px;
+}
+
+QTabWidget::pane {
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    background-color: #ffffff;
+    padding: 8px;
+}
+
+QTabBar::tab {
+    background-color: #f0f0f0;
+    border: 1px solid #e0e0e0;
+    border-bottom: none;
+    padding: 8px 16px;
+    margin-right: 2px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}
+
+QTabBar::tab:selected {
+    background-color: #ffffff;
+    border-bottom: 1px solid #ffffff;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #e8e8e8;
+}
+
+QLabel#statusValue {
+    font-weight: bold;
+    font-size: 12px;
+}
+
+QLabel#sectionTitle {
+    font-size: 11px;
+    color: #666666;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+QSplitter::handle {
+    background-color: #e0e0e0;
+}
+
+QSplitter::handle:horizontal {
+    width: 3px;
+}
+
+QSplitter::handle:vertical {
+    height: 3px;
+}
+
+QSplitter::handle:hover {
+    background-color: #2196F3;
+}
+"""
 
 
 class CrackWorker(QThread):
@@ -69,7 +354,7 @@ class CrackWorker(QThread):
 
 
 class MainWindow(QMainWindow):
-    """Main application window."""
+    """Main application window with modern 3-column layout."""
 
     def __init__(self):
         super().__init__()
@@ -80,9 +365,13 @@ class MainWindow(QMainWindow):
         self.current_backend: Optional[CrackerBackend] = None
         self.crack_worker: Optional[CrackWorker] = None
         self.current_hash_result: Optional[HashResult] = None
+        self._log_visible = True
 
         self.setWindowTitle("Simple Cracker - Password Recovery Tool")
-        self.setMinimumSize(900, 700)
+        self.setMinimumSize(1000, 650)
+        self.resize(1200, 750)
+
+        self.setStyleSheet(STYLE_SHEET)
 
         self._setup_ui()
         self._setup_menu()
@@ -90,131 +379,205 @@ class MainWindow(QMainWindow):
         self._check_backends()
 
     def _setup_ui(self):
-        """Setup the main UI."""
+        """Setup the main UI with 3-column layout."""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(8)
 
-        # Create splitter for resizable sections
-        splitter = QSplitter(Qt.Vertical)
-        main_layout.addWidget(splitter)
+        # Main vertical splitter (columns + log)
+        self.main_splitter = QSplitter(Qt.Vertical)
+        main_layout.addWidget(self.main_splitter)
 
-        # Top section: File and Hash
-        top_widget = QWidget()
-        top_layout = QVBoxLayout(top_widget)
-        top_layout.setContentsMargins(0, 0, 0, 0)
+        # Top section: 3 columns
+        columns_widget = QWidget()
+        columns_layout = QHBoxLayout(columns_widget)
+        columns_layout.setContentsMargins(0, 0, 0, 0)
+        columns_layout.setSpacing(0)
 
-        # File selection group
+        # Horizontal splitter for the 3 columns
+        self.columns_splitter = QSplitter(Qt.Horizontal)
+        columns_layout.addWidget(self.columns_splitter)
+
+        # Create the 3 panels
+        left_panel = self._create_source_panel()
+        center_panel = self._create_config_panel()
+        right_panel = self._create_results_panel()
+
+        self.columns_splitter.addWidget(left_panel)
+        self.columns_splitter.addWidget(center_panel)
+        self.columns_splitter.addWidget(right_panel)
+
+        # Set column sizes and stretch factors
+        self.columns_splitter.setSizes([280, 420, 320])
+        self.columns_splitter.setStretchFactor(0, 0)  # Left: fixed
+        self.columns_splitter.setStretchFactor(1, 1)  # Center: stretch
+        self.columns_splitter.setStretchFactor(2, 0)  # Right: fixed
+
+        self.main_splitter.addWidget(columns_widget)
+
+        # Bottom section: collapsible log
+        log_panel = self._create_log_panel()
+        self.main_splitter.addWidget(log_panel)
+
+        # Set main splitter proportions
+        self.main_splitter.setSizes([500, 150])
+        self.main_splitter.setStretchFactor(0, 1)
+        self.main_splitter.setStretchFactor(1, 0)
+
+    def _create_source_panel(self) -> QWidget:
+        """Create the left panel: file selection and hash display."""
+        panel = QWidget()
+        panel.setMinimumWidth(250)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(4, 4, 8, 4)
+        layout.setSpacing(12)
+
+        # Target File group
         file_group = QGroupBox("Target File")
-        file_layout = QHBoxLayout(file_group)
+        file_layout = QVBoxLayout(file_group)
+        file_layout.setSpacing(8)
 
         self.file_path_edit = QLineEdit()
         self.file_path_edit.setPlaceholderText("Select an encrypted file...")
         file_layout.addWidget(self.file_path_edit)
 
+        file_buttons = QHBoxLayout()
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(self._browse_file)
-        file_layout.addWidget(browse_btn)
+        file_buttons.addWidget(browse_btn)
 
         extract_btn = QPushButton("Extract Hash")
         extract_btn.clicked.connect(self._extract_hash)
-        file_layout.addWidget(extract_btn)
+        file_buttons.addWidget(extract_btn)
+        file_layout.addLayout(file_buttons)
 
-        top_layout.addWidget(file_group)
+        layout.addWidget(file_group)
 
-        # Hash display group
-        hash_group = QGroupBox("Hash Information")
+        # Hash Information group
+        info_group = QGroupBox("Hash Information")
+        info_layout = QGridLayout(info_group)
+        info_layout.setSpacing(8)
+
+        info_layout.addWidget(QLabel("File Type:"), 0, 0)
+        self.file_type_label = QLabel("N/A")
+        self.file_type_label.setObjectName("statusValue")
+        self.file_type_label.setStyleSheet("color: #1976D2;")
+        info_layout.addWidget(self.file_type_label, 0, 1)
+
+        info_layout.addWidget(QLabel("Hash Mode:"), 1, 0)
+        self.hash_type_label = QLabel("N/A")
+        self.hash_type_label.setObjectName("statusValue")
+        self.hash_type_label.setStyleSheet("color: #1976D2;")
+        info_layout.addWidget(self.hash_type_label, 1, 1)
+
+        layout.addWidget(info_group)
+
+        # Extracted Hash group
+        hash_group = QGroupBox("Extracted Hash")
         hash_layout = QVBoxLayout(hash_group)
 
-        hash_info_layout = QHBoxLayout()
-        hash_info_layout.addWidget(QLabel("File Type:"))
-        self.file_type_label = QLabel("N/A")
-        self.file_type_label.setStyleSheet("font-weight: bold;")
-        hash_info_layout.addWidget(self.file_type_label)
-        hash_info_layout.addSpacing(20)
-        hash_info_layout.addWidget(QLabel("Hash Type:"))
-        self.hash_type_label = QLabel("N/A")
-        self.hash_type_label.setStyleSheet("font-weight: bold;")
-        hash_info_layout.addWidget(self.hash_type_label)
-        hash_info_layout.addStretch()
-        hash_layout.addLayout(hash_info_layout)
-
         self.hash_edit = QTextEdit()
-        self.hash_edit.setMaximumHeight(80)
+        self.hash_edit.setObjectName("hashDisplay")
         self.hash_edit.setPlaceholderText("Hash will appear here after extraction...")
-        self.hash_edit.setFont(QFont("Monospace", 9))
+        self.hash_edit.setFont(QFont("Consolas", 10))
         hash_layout.addWidget(self.hash_edit)
 
-        top_layout.addWidget(hash_group)
-        splitter.addWidget(top_widget)
+        layout.addWidget(hash_group)
 
-        # Middle section: Attack configuration
-        middle_widget = QWidget()
-        middle_layout = QVBoxLayout(middle_widget)
-        middle_layout.setContentsMargins(0, 0, 0, 0)
+        # Stretch to fill remaining space
+        layout.addStretch()
 
-        # Backend selection
+        return panel
+
+    def _create_config_panel(self) -> QWidget:
+        """Create the center panel: backend selection and attack configuration."""
+        panel = QWidget()
+        panel.setMinimumWidth(320)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(12)
+
+        # Backend Selection group
         backend_group = QGroupBox("Cracking Backend")
-        backend_layout = QHBoxLayout(backend_group)
+        backend_layout = QVBoxLayout(backend_group)
+        backend_layout.setSpacing(8)
 
         self.backend_group = QButtonGroup()
+
+        # John row
+        john_row = QHBoxLayout()
         self.john_radio = QRadioButton("John the Ripper")
-        self.hashcat_radio = QRadioButton("Hashcat")
         self.backend_group.addButton(self.john_radio, 0)
-        self.backend_group.addButton(self.hashcat_radio, 1)
-        self.john_radio.setChecked(True)
-
+        john_row.addWidget(self.john_radio)
         self.john_status = QLabel()
+        self.john_status.setStyleSheet("font-size: 11px;")
+        john_row.addWidget(self.john_status)
+        john_row.addStretch()
+        backend_layout.addLayout(john_row)
+
+        # Hashcat row
+        hashcat_row = QHBoxLayout()
+        self.hashcat_radio = QRadioButton("Hashcat")
+        self.backend_group.addButton(self.hashcat_radio, 1)
+        hashcat_row.addWidget(self.hashcat_radio)
         self.hashcat_status = QLabel()
+        self.hashcat_status.setStyleSheet("font-size: 11px;")
+        hashcat_row.addWidget(self.hashcat_status)
+        hashcat_row.addStretch()
+        backend_layout.addLayout(hashcat_row)
 
-        # Place each status label next to its corresponding backend toggle.
-        backend_layout.addWidget(self.john_radio)
-        backend_layout.addWidget(self.john_status)
-        backend_layout.addWidget(self.hashcat_radio)
-        backend_layout.addWidget(self.hashcat_status)
-        backend_layout.addStretch()
+        self.john_radio.setChecked(True)
+        layout.addWidget(backend_group)
 
-        middle_layout.addWidget(backend_group)
-
-        # Attack mode selection
-        attack_group = QGroupBox("Attack Mode")
+        # Attack Configuration group
+        attack_group = QGroupBox("Attack Configuration")
         attack_layout = QVBoxLayout(attack_group)
 
-        # Attack mode tabs
         self.attack_tabs = QTabWidget()
 
-        # Dictionary attack tab
+        # Dictionary tab
         dict_tab = QWidget()
         dict_layout = QVBoxLayout(dict_tab)
+        dict_layout.setSpacing(12)
 
-        wordlist_layout = QHBoxLayout()
-        wordlist_layout.addWidget(QLabel("Wordlist:"))
+        wordlist_label = QLabel("Wordlist:")
+        wordlist_label.setObjectName("sectionTitle")
+        dict_layout.addWidget(wordlist_label)
+
+        wordlist_row = QHBoxLayout()
         self.wordlist_edit = QLineEdit()
         self.wordlist_edit.setPlaceholderText("Select a wordlist file...")
-        wordlist_layout.addWidget(self.wordlist_edit)
+        wordlist_row.addWidget(self.wordlist_edit)
         wordlist_browse = QPushButton("Browse...")
         wordlist_browse.clicked.connect(self._browse_wordlist)
-        wordlist_layout.addWidget(wordlist_browse)
-        dict_layout.addLayout(wordlist_layout)
+        wordlist_row.addWidget(wordlist_browse)
+        dict_layout.addLayout(wordlist_row)
 
-        rules_layout = QHBoxLayout()
-        self.use_rules_check = QCheckBox("Use rules:")
-        rules_layout.addWidget(self.use_rules_check)
+        rules_row = QHBoxLayout()
+        self.use_rules_check = QCheckBox("Apply rules:")
+        rules_row.addWidget(self.use_rules_check)
         self.rules_combo = QComboBox()
         self.rules_combo.setEnabled(False)
+        self.rules_combo.setMinimumWidth(150)
         self.use_rules_check.toggled.connect(self.rules_combo.setEnabled)
-        rules_layout.addWidget(self.rules_combo)
-        rules_layout.addStretch()
-        dict_layout.addLayout(rules_layout)
+        rules_row.addWidget(self.rules_combo)
+        rules_row.addStretch()
+        dict_layout.addLayout(rules_row)
 
+        dict_layout.addStretch()
         self.attack_tabs.addTab(dict_tab, "Dictionary")
 
-        # Brute force tab
+        # Brute Force tab
         brute_tab = QWidget()
         brute_layout = QVBoxLayout(brute_tab)
+        brute_layout.setSpacing(12)
 
-        charset_layout = QHBoxLayout()
-        charset_layout.addWidget(QLabel("Character set:"))
+        charset_label = QLabel("Character Set:")
+        charset_label.setObjectName("sectionTitle")
+        brute_layout.addWidget(charset_label)
+
         self.charset_combo = QComboBox()
         self.charset_combo.addItems([
             "All printable (?a)",
@@ -225,158 +588,212 @@ class MainWindow(QMainWindow):
             "Lowercase + Digits",
             "Upper + Lower + Digits",
         ])
-        charset_layout.addWidget(self.charset_combo)
-        charset_layout.addStretch()
-        brute_layout.addLayout(charset_layout)
+        brute_layout.addWidget(self.charset_combo)
 
-        length_layout = QHBoxLayout()
-        length_layout.addWidget(QLabel("Min length:"))
+        length_label = QLabel("Password Length:")
+        length_label.setObjectName("sectionTitle")
+        brute_layout.addWidget(length_label)
+
+        length_row = QHBoxLayout()
+        length_row.addWidget(QLabel("Min:"))
         self.min_length_spin = QSpinBox()
         self.min_length_spin.setRange(1, 20)
         self.min_length_spin.setValue(1)
-        length_layout.addWidget(self.min_length_spin)
-        length_layout.addWidget(QLabel("Max length:"))
+        length_row.addWidget(self.min_length_spin)
+
+        length_row.addSpacing(16)
+        length_row.addWidget(QLabel("Max:"))
         self.max_length_spin = QSpinBox()
         self.max_length_spin.setRange(1, 20)
         self.max_length_spin.setValue(6)
-        length_layout.addWidget(self.max_length_spin)
-        self.increment_check = QCheckBox("Increment mode")
-        self.increment_check.setChecked(True)
-        length_layout.addWidget(self.increment_check)
-        length_layout.addStretch()
-        brute_layout.addLayout(length_layout)
+        length_row.addWidget(self.max_length_spin)
+        length_row.addStretch()
+        brute_layout.addLayout(length_row)
 
+        self.increment_check = QCheckBox("Increment mode (start from min)")
+        self.increment_check.setChecked(True)
+        brute_layout.addWidget(self.increment_check)
+
+        brute_layout.addStretch()
         self.attack_tabs.addTab(brute_tab, "Brute Force")
 
-        # Mask attack tab
+        # Mask tab
         mask_tab = QWidget()
         mask_layout = QVBoxLayout(mask_tab)
+        mask_layout.setSpacing(12)
 
-        mask_input_layout = QHBoxLayout()
-        mask_input_layout.addWidget(QLabel("Mask:"))
+        mask_label = QLabel("Mask Pattern:")
+        mask_label.setObjectName("sectionTitle")
+        mask_layout.addWidget(mask_label)
+
         self.mask_edit = QLineEdit()
         self.mask_edit.setPlaceholderText("e.g., ?u?l?l?l?d?d?d")
-        mask_input_layout.addWidget(self.mask_edit)
-        mask_layout.addLayout(mask_input_layout)
+        self.mask_edit.setFont(QFont("Consolas", 11))
+        mask_layout.addWidget(self.mask_edit)
 
         mask_help = QLabel(
-            "Mask characters: ?l=lowercase, ?u=uppercase, ?d=digit, ?s=special, ?a=all"
+            "?l = lowercase  ?u = uppercase  ?d = digit\n"
+            "?s = special    ?a = all printable"
         )
-        mask_help.setStyleSheet("color: gray; font-size: 10px;")
+        mask_help.setStyleSheet("color: #666666; font-size: 11px;")
         mask_layout.addWidget(mask_help)
-        mask_layout.addStretch()
 
+        mask_layout.addStretch()
         self.attack_tabs.addTab(mask_tab, "Mask")
 
         attack_layout.addWidget(self.attack_tabs)
-        middle_layout.addWidget(attack_group)
+        layout.addWidget(attack_group)
 
-        splitter.addWidget(middle_widget)
-
-        # Bottom section: Progress and controls
-        bottom_widget = QWidget()
-        bottom_layout = QVBoxLayout(bottom_widget)
-        bottom_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Control buttons
-        control_layout = QHBoxLayout()
+        # Control Buttons
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setSpacing(12)
 
         self.start_btn = QPushButton("Start Cracking")
-        self.start_btn.setMinimumHeight(40)
-        self.start_btn.setStyleSheet(
-            "QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }"
-            "QPushButton:hover { background-color: #45a049; }"
-            "QPushButton:disabled { background-color: #cccccc; }"
-        )
+        self.start_btn.setObjectName("startBtn")
         self.start_btn.clicked.connect(self._start_crack)
-        control_layout.addWidget(self.start_btn)
+        buttons_layout.addWidget(self.start_btn)
 
         self.stop_btn = QPushButton("Stop")
-        self.stop_btn.setMinimumHeight(40)
+        self.stop_btn.setObjectName("stopBtn")
         self.stop_btn.setEnabled(False)
-        self.stop_btn.setStyleSheet(
-            "QPushButton { background-color: #f44336; color: white; font-weight: bold; }"
-            "QPushButton:hover { background-color: #da190b; }"
-            "QPushButton:disabled { background-color: #cccccc; }"
-        )
         self.stop_btn.clicked.connect(self._stop_crack)
-        control_layout.addWidget(self.stop_btn)
+        buttons_layout.addWidget(self.stop_btn)
 
-        bottom_layout.addLayout(control_layout)
+        layout.addLayout(buttons_layout)
 
-        # Progress section
+        # Stretch to push buttons down
+        layout.addStretch()
+
+        return panel
+
+    def _create_results_panel(self) -> QWidget:
+        """Create the right panel: progress, result, and command display."""
+        panel = QWidget()
+        panel.setMinimumWidth(280)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(8, 4, 4, 4)
+        layout.setSpacing(12)
+
+        # Progress group
         progress_group = QGroupBox("Progress")
         progress_layout = QVBoxLayout(progress_group)
+        progress_layout.setSpacing(10)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(True)
-        self.progress_bar.setFormat("%p% - %v")
+        self.progress_bar.setFormat("%p%")
+        self.progress_bar.setMinimumHeight(24)
         progress_layout.addWidget(self.progress_bar)
 
-        stats_layout = QHBoxLayout()
-        stats_layout.addWidget(QLabel("Speed:"))
-        self.speed_label = QLabel("N/A")
-        self.speed_label.setStyleSheet("font-weight: bold;")
-        stats_layout.addWidget(self.speed_label)
-        stats_layout.addSpacing(20)
-        stats_layout.addWidget(QLabel("ETA:"))
-        self.eta_label = QLabel("N/A")
-        self.eta_label.setStyleSheet("font-weight: bold;")
-        stats_layout.addWidget(self.eta_label)
-        stats_layout.addSpacing(20)
-        stats_layout.addWidget(QLabel("Status:"))
+        # Stats grid
+        stats_grid = QGridLayout()
+        stats_grid.setSpacing(8)
+
+        stats_grid.addWidget(QLabel("Speed:"), 0, 0)
+        self.speed_label = QLabel("--")
+        self.speed_label.setObjectName("statusValue")
+        stats_grid.addWidget(self.speed_label, 0, 1)
+
+        stats_grid.addWidget(QLabel("ETA:"), 1, 0)
+        self.eta_label = QLabel("--")
+        self.eta_label.setObjectName("statusValue")
+        stats_grid.addWidget(self.eta_label, 1, 1)
+
+        stats_grid.addWidget(QLabel("Status:"), 2, 0)
         self.status_label = QLabel("Idle")
-        self.status_label.setStyleSheet("font-weight: bold;")
-        stats_layout.addWidget(self.status_label)
-        stats_layout.addStretch()
-        progress_layout.addLayout(stats_layout)
+        self.status_label.setObjectName("statusValue")
+        self.status_label.setStyleSheet("color: #666666; font-weight: bold;")
+        stats_grid.addWidget(self.status_label, 2, 1)
 
-        # Active command display
-        cmd_layout = QHBoxLayout()
-        cmd_layout.addWidget(QLabel("Command:"))
-        self.command_edit = QLineEdit()
-        self.command_edit.setReadOnly(True)
-        self.command_edit.setStyleSheet("QLineEdit { font-family: Monospace; }")
-        self.command_edit.setMinimumWidth(200)
-        cmd_layout.addWidget(self.command_edit)
-        progress_layout.addLayout(cmd_layout)
+        progress_layout.addLayout(stats_grid)
+        layout.addWidget(progress_group)
 
-        bottom_layout.addWidget(progress_group)
-
-        # Result section
+        # Result group
         result_group = QGroupBox("Result")
         result_layout = QVBoxLayout(result_group)
+        result_layout.setSpacing(10)
 
-        result_display_layout = QHBoxLayout()
-        result_display_layout.addWidget(QLabel("Password:"))
+        pwd_label = QLabel("Password Found:")
+        pwd_label.setObjectName("sectionTitle")
+        result_layout.addWidget(pwd_label)
+
         self.password_edit = QLineEdit()
+        self.password_edit.setObjectName("passwordResult")
         self.password_edit.setReadOnly(True)
-        self.password_edit.setStyleSheet(
-            "QLineEdit { font-size: 14px; font-weight: bold; background-color: #ffffcc; }"
-        )
-        result_display_layout.addWidget(self.password_edit)
+        self.password_edit.setPlaceholderText("No password found yet")
+        result_layout.addWidget(self.password_edit)
 
-        copy_btn = QPushButton("Copy")
+        copy_btn = QPushButton("Copy to Clipboard")
+        copy_btn.setObjectName("copyBtn")
         copy_btn.clicked.connect(self._copy_password)
-        result_display_layout.addWidget(copy_btn)
+        result_layout.addWidget(copy_btn)
 
-        result_layout.addLayout(result_display_layout)
-        bottom_layout.addWidget(result_group)
+        layout.addWidget(result_group)
 
-        # Log output
-        log_group = QGroupBox("Log")
-        log_layout = QVBoxLayout(log_group)
+        # Command group
+        command_group = QGroupBox("Command")
+        command_layout = QVBoxLayout(command_group)
+
+        self.command_edit = QLineEdit()
+        self.command_edit.setObjectName("commandDisplay")
+        self.command_edit.setReadOnly(True)
+        self.command_edit.setPlaceholderText("$ command will appear here...")
+        command_layout.addWidget(self.command_edit)
+
+        layout.addWidget(command_group)
+
+        # Stretch to fill remaining space
+        layout.addStretch()
+
+        return panel
+
+    def _create_log_panel(self) -> QWidget:
+        """Create the bottom collapsible log panel."""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+
+        # Header with toggle button
+        header = QHBoxLayout()
+
+        self.toggle_log_btn = QPushButton("Hide Log")
+        self.toggle_log_btn.setObjectName("toggleLogBtn")
+        self.toggle_log_btn.clicked.connect(self._toggle_log)
+        header.addWidget(self.toggle_log_btn)
+
+        header.addStretch()
+
+        clear_btn = QPushButton("Clear")
+        clear_btn.setObjectName("toggleLogBtn")
+        clear_btn.clicked.connect(lambda: self.log_edit.clear())
+        header.addWidget(clear_btn)
+
+        layout.addLayout(header)
+
+        # Log text area
         self.log_edit = QTextEdit()
+        self.log_edit.setObjectName("logDisplay")
         self.log_edit.setReadOnly(True)
-        self.log_edit.setMaximumHeight(100)
-        self.log_edit.setFont(QFont("Monospace", 9))
-        log_layout.addWidget(self.log_edit)
-        bottom_layout.addWidget(log_group)
+        self.log_edit.setMinimumHeight(80)
+        self.log_edit.setMaximumHeight(200)
+        self.log_edit.setFont(QFont("Consolas", 10))
+        layout.addWidget(self.log_edit)
 
-        splitter.addWidget(bottom_widget)
+        return panel
 
-        # Set splitter proportions
-        splitter.setSizes([200, 250, 350])
+    def _toggle_log(self):
+        """Toggle log panel visibility."""
+        self._log_visible = not self._log_visible
+
+        if self._log_visible:
+            self.log_edit.show()
+            self.toggle_log_btn.setText("Hide Log")
+            self.main_splitter.setSizes([500, 150])
+        else:
+            self.log_edit.hide()
+            self.toggle_log_btn.setText("Show Log")
+            self.main_splitter.setSizes([650, 30])
 
     def _setup_menu(self):
         """Setup menu bar."""
@@ -419,22 +836,22 @@ class MainWindow(QMainWindow):
         """Check availability of cracking backends."""
         if self.john_backend.is_available():
             version = self.john_backend.get_version() or "available"
-            self.john_status.setText(f"[{version[:30]}]")
-            self.john_status.setStyleSheet("color: green;")
+            self.john_status.setText(f"({version[:25]})")
+            self.john_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
             self.john_radio.setEnabled(True)
         else:
-            self.john_status.setText("[Not found]")
-            self.john_status.setStyleSheet("color: red;")
+            self.john_status.setText("(not found)")
+            self.john_status.setStyleSheet("color: #f44336; font-size: 11px;")
             self.john_radio.setEnabled(False)
 
         if self.hashcat_backend.is_available():
             version = self.hashcat_backend.get_version() or "available"
-            self.hashcat_status.setText(f"[{version[:30]}]")
-            self.hashcat_status.setStyleSheet("color: green;")
+            self.hashcat_status.setText(f"({version[:25]})")
+            self.hashcat_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
             self.hashcat_radio.setEnabled(True)
         else:
-            self.hashcat_status.setText("[Not found]")
-            self.hashcat_status.setStyleSheet("color: red;")
+            self.hashcat_status.setText("(not found)")
+            self.hashcat_status.setStyleSheet("color: #f44336; font-size: 11px;")
             self.hashcat_radio.setEnabled(False)
 
         # Select first available backend
@@ -601,7 +1018,9 @@ class MainWindow(QMainWindow):
         self.stop_btn.setEnabled(True)
         self.progress_bar.setValue(0)
         self.password_edit.setText("")
+        self.password_edit.setPlaceholderText("Cracking in progress...")
         self.status_label.setText("Running...")
+        self.status_label.setStyleSheet("color: #FF9800; font-weight: bold;")
         self._set_current_command("")
 
         # Start worker thread
@@ -621,8 +1040,8 @@ class MainWindow(QMainWindow):
     def _on_progress(self, progress: CrackProgress):
         """Handle progress update."""
         self.progress_bar.setValue(int(progress.progress_percent))
-        self.speed_label.setText(progress.speed)
-        self.eta_label.setText(progress.estimated_time)
+        self.speed_label.setText(progress.speed or "--")
+        self.eta_label.setText(progress.estimated_time or "--")
         self.status_label.setText(progress.status.value)
 
         if progress.password_found:
@@ -635,18 +1054,20 @@ class MainWindow(QMainWindow):
         """Handle crack completion."""
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
+        self.password_edit.setPlaceholderText("No password found yet")
 
         if success:
             self.status_label.setText("Found!")
-            self.status_label.setStyleSheet("color: green; font-weight: bold;")
+            self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
             self._log(f"SUCCESS: {message}")
             QMessageBox.information(self, "Password Found!", message)
         else:
-            label = "Error" if (self.current_backend and self.current_backend.status == CrackStatus.FAILED) else "Not found"
+            is_error = self.current_backend and self.current_backend.status == CrackStatus.FAILED
+            label = "Error" if is_error else "Not found"
             self.status_label.setText(label)
-            self.status_label.setStyleSheet("color: red; font-weight: bold;")
+            self.status_label.setStyleSheet("color: #f44336; font-weight: bold;")
             self._log(f"FINISHED: {message}")
-            if label == "Error":
+            if is_error:
                 QMessageBox.warning(self, "Cracking Failed", message)
 
         self.crack_worker = None
