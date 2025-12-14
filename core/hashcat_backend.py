@@ -161,6 +161,11 @@ class HashcatBackend(CrackerBackend):
                 cmd.extend(["-r", config.rules_file])
 
         elif config.attack_mode == AttackMode.BRUTE_FORCE or config.attack_mode == AttackMode.MASK:
+            # Add custom charset if specified
+            if config.custom_charset:
+                expanded_charset = self._expand_charset_ranges(config.custom_charset)
+                cmd.extend(["-1", expanded_charset])
+
             # Build mask
             mask = config.mask if config.mask else self._build_mask(config)
             cmd.append(mask)
@@ -204,8 +209,54 @@ class HashcatBackend(CrackerBackend):
             self._cleanup()
             return False
 
+    def _expand_charset_ranges(self, charset: str) -> str:
+        """
+        Expand charset ranges like 'a-z' or 'A-Z0-9' into explicit characters.
+        Examples:
+            'a-z' -> 'abcdefghijklmnopqrstuvwxyz'
+            'a-zA-Z' -> 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+            'wk' -> 'wk' (no change)
+            '0-9a-f' -> '0123456789abcdef'
+        """
+        result = []
+        i = 0
+        while i < len(charset):
+            # Check for range pattern: char-char
+            if i + 2 < len(charset) and charset[i + 1] == '-':
+                start_char = charset[i]
+                end_char = charset[i + 2]
+                # Expand the range
+                start_ord = ord(start_char)
+                end_ord = ord(end_char)
+                if start_ord <= end_ord:
+                    for c in range(start_ord, end_ord + 1):
+                        result.append(chr(c))
+                else:
+                    # Invalid range, just add the characters as-is
+                    result.append(start_char)
+                    result.append('-')
+                    result.append(end_char)
+                i += 3
+            else:
+                result.append(charset[i])
+                i += 1
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique = []
+        for c in result:
+            if c not in seen:
+                seen.add(c)
+                unique.append(c)
+
+        return ''.join(unique)
+
     def _build_mask(self, config: CrackConfig) -> str:
         """Build a hashcat mask from config."""
+        # If custom charset is set, use ?1 placeholder (will be defined via -1 flag)
+        if config.custom_charset:
+            return "?1" * config.max_length
+
         # Map our charset to hashcat
         charset_map = {
             "?l": "?l",  # lowercase

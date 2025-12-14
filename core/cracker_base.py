@@ -49,6 +49,7 @@ class CrackConfig:
     min_length: int = 1
     max_length: int = 8
     charset: str = "?a"  # For brute force: ?l=lower, ?u=upper, ?d=digit, ?s=special, ?a=all
+    custom_charset: Optional[str] = None  # Custom charset: "wk", "a-z", "a-zA-Z0-9", etc.
     increment: bool = False
 
 

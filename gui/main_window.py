@@ -587,8 +587,25 @@ class MainWindow(QMainWindow):
             "Special (?s)",
             "Lowercase + Digits",
             "Upper + Lower + Digits",
+            "Custom (specify below)",
         ])
+        self.charset_combo.currentIndexChanged.connect(self._on_charset_changed)
         brute_layout.addWidget(self.charset_combo)
+
+        # Custom charset input
+        custom_charset_label = QLabel("Custom Characters:")
+        custom_charset_label.setObjectName("sectionTitle")
+        brute_layout.addWidget(custom_charset_label)
+
+        self.custom_charset_edit = QLineEdit()
+        self.custom_charset_edit.setPlaceholderText("e.g., wk or a-z or a-zA-Z0-9")
+        self.custom_charset_edit.setFont(QFont("Consolas", 11))
+        self.custom_charset_edit.setEnabled(False)
+        brute_layout.addWidget(self.custom_charset_edit)
+
+        custom_help = QLabel("Supports ranges (a-z, 0-9) or explicit chars (wk@#)")
+        custom_help.setStyleSheet("color: #666666; font-size: 10px;")
+        brute_layout.addWidget(custom_help)
 
         length_label = QLabel("Password Length:")
         length_label.setObjectName("sectionTitle")
@@ -873,6 +890,14 @@ class MainWindow(QMainWindow):
         if not rules:
             self.rules_combo.addItem("No rules found", "")
 
+    def _on_charset_changed(self, index: int):
+        """Handle charset combo box change."""
+        # Index 7 = "Custom (specify below)"
+        is_custom = (index == 7)
+        self.custom_charset_edit.setEnabled(is_custom)
+        if is_custom:
+            self.custom_charset_edit.setFocus()
+
     def _browse_file(self):
         """Browse for target file."""
         formats = self.hash_extractor.get_supported_formats()
@@ -971,17 +996,27 @@ class MainWindow(QMainWindow):
             config.max_length = self.max_length_spin.value()
             config.increment = self.increment_check.isChecked()
 
-            # Map charset selection
-            charset_map = {
-                0: "?a",  # All printable
-                1: "?l",  # Lowercase
-                2: "?u",  # Uppercase
-                3: "?d",  # Digits
-                4: "?s",  # Special
-                5: "?l?d",  # Lower + digits
-                6: "?u?l?d",  # Upper + lower + digits
-            }
-            config.charset = charset_map.get(self.charset_combo.currentIndex(), "?a")
+            charset_index = self.charset_combo.currentIndex()
+
+            # Check if custom charset is selected (index 7)
+            if charset_index == 7:
+                custom = self.custom_charset_edit.text().strip()
+                if not custom:
+                    QMessageBox.warning(self, "Error", "Please enter custom characters")
+                    return None
+                config.custom_charset = custom
+            else:
+                # Map charset selection
+                charset_map = {
+                    0: "?a",  # All printable
+                    1: "?l",  # Lowercase
+                    2: "?u",  # Uppercase
+                    3: "?d",  # Digits
+                    4: "?s",  # Special
+                    5: "?l?d",  # Lower + digits
+                    6: "?u?l?d",  # Upper + lower + digits
+                }
+                config.charset = charset_map.get(charset_index, "?a")
 
         elif tab_index == 2:  # Mask
             config.attack_mode = AttackMode.MASK
