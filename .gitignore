@@ -1,0 +1,28 @@
+# Python / venv
+env/
+.venv/
+*.py[cod]
+__pycache__/
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# John the Ripper sources/build
+john-1.9.0-jumbo-1/
+resources/john-jumbo/
+
+# Hashcat session/cache data
+.hashcat_data*
+.cache/
+
+# Qt/PySide generated artifacts
+*.qmlc
+*.jsc

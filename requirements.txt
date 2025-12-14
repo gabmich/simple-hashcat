@@ -1,0 +1,15 @@
+# GUI Framework
+PySide6>=6.5.0
+
+# Note: The following system packages should be installed separately:
+# - john (John the Ripper) - for password cracking
+# - hashcat - for GPU-accelerated password cracking
+#
+# On Debian/Ubuntu:
+#   sudo apt install john hashcat
+#
+# On Arch Linux:
+#   sudo pacman -S john hashcat
+#
+# On Fedora:
+#   sudo dnf install john hashcat
