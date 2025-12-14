@@ -9,6 +9,7 @@ import re
 import signal
 import threading
 import time
+import shlex
 from typing import Optional
 from pathlib import Path
 
@@ -37,15 +38,31 @@ class JohnBackend(CrackerBackend):
 
         for path in paths:
             try:
-                result = subprocess.run(
+                # Try common probes; some builds don't support --help/--version.
+                probes = [
                     [path, "--help"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if result.returncode == 0 or "John the Ripper" in result.stdout + result.stderr:
-                    return path
-            except (FileNotFoundError, subprocess.TimeoutExpired):
+                    [path, "--list=help"],
+                    [path],
+                ]
+                for cmd in probes:
+                    try:
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
+                    except subprocess.TimeoutExpired:
+                        continue
+
+                    output = result.stdout + result.stderr
+                    if (
+                        result.returncode == 0
+                        or "John the Ripper" in output
+                        or "usage: john" in output.lower()
+                    ):
+                        return path
+            except FileNotFoundError:
                 continue
 
         return None
@@ -59,16 +76,32 @@ class JohnBackend(CrackerBackend):
         if not self.john_path:
             return None
 
-        try:
-            result = subprocess.run(
-                [self.john_path, "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            return result.stdout.strip() or result.stderr.strip()
-        except Exception:
-            return None
+        probes = [
+            [self.john_path],  # prints banner with version
+            [self.john_path, "--version"],
+            [self.john_path, "--list=build-info"],
+        ]
+
+        for cmd in probes:
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                output = (result.stdout + result.stderr).strip()
+                if not output or "Unknown option" in output:
+                    continue
+
+                # First non-empty line usually contains the version string.
+                for line in output.splitlines():
+                    if line.strip():
+                        return line.strip()
+            except Exception:
+                continue
+
+        return None
 
     def start_crack(self, config: CrackConfig) -> bool:
         """Start cracking with John the Ripper."""
@@ -128,6 +161,7 @@ class JohnBackend(CrackerBackend):
         cmd.append(self.temp_hash_file)
 
         try:
+            self.last_command = shlex.join(cmd)
             self.process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,

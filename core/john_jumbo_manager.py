@@ -196,7 +196,7 @@ class JohnJumboManager:
                 except Exception:
                     pass
 
-    def run_script(self, script_name: str, file_path: str) -> tuple[bool, str]:
+    def run_script(self, script_name: str, file_path: str) -> tuple[bool, str, Optional[str]]:
         """
         Run a john script on a file.
 
@@ -205,14 +205,14 @@ class JohnJumboManager:
             file_path: Path to the file to process
 
         Returns:
-            (success, output_or_error)
+            (success, output_or_error, command_line)
         """
         if not self.is_installed():
-            return False, "john-jumbo not installed. Set JOHN_JUMBO_RUN_PATH to your run/ directory."
+            return False, "john-jumbo not installed. Set JOHN_JUMBO_RUN_PATH to your run/ directory.", None
 
         script_path = self.get_script_path(script_name)
         if not script_path:
-            return False, f"Script {script_name} not found in {self.run_dir}"
+            return False, f"Script {script_name} not found in {self.run_dir}", None
 
         # Determine interpreter
         if script_path.endswith('.pl'):
@@ -223,6 +223,8 @@ class JohnJumboManager:
             cmd = ['ruby', script_path, file_path]
         else:
             cmd = [script_path, file_path]
+
+        command_line = " ".join(cmd)
 
         try:
             result = subprocess.run(
@@ -235,22 +237,22 @@ class JohnJumboManager:
 
             output = result.stdout.strip()
             if output:
-                return True, output
+                return True, output, command_line
 
             if result.stderr:
                 # Some scripts print tracebacks when file is not actually encrypted
                 if "UnboundLocalError" in result.stderr and "libreoffice2john" in script_name:
-                    return False, "Le fichier ODF ne semble pas chiffré ou est invalide."
-                return False, result.stderr.strip()
+                    return False, "Le fichier ODF ne semble pas chiffré ou est invalide.", command_line
+                return False, result.stderr.strip(), command_line
 
-            return False, "No output from script"
+            return False, "No output from script", command_line
 
         except subprocess.TimeoutExpired:
-            return False, "Script timed out"
+            return False, "Script timed out", command_line
         except FileNotFoundError as e:
-            return False, f"Interpreter not found: {e}"
+            return False, f"Interpreter not found: {e}", command_line
         except Exception as e:
-            return False, str(e)
+            return False, str(e), command_line
 
     def get_available_scripts(self) -> list[str]:
         """Get list of available *2john scripts."""

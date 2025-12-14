@@ -36,6 +36,7 @@ class HashResult:
     hash_string: Optional[str]
     file_type: FileType
     hash_type: Optional[str]  # For hashcat mode
+    command_line: Optional[str] = None
     error_message: Optional[str] = None
 
 
@@ -206,7 +207,7 @@ class HashExtractor:
             )
 
         # Run the script
-        success, output = self.john_manager.run_script(script_name, file_path)
+        success, output, command_line = self.john_manager.run_script(script_name, file_path)
 
         if success:
             # Detect specific hash type for hashcat
@@ -216,7 +217,8 @@ class HashExtractor:
                 success=True,
                 hash_string=output,
                 file_type=file_type,
-                hash_type=hash_type
+                hash_type=hash_type,
+                command_line=command_line
             )
         else:
             return HashResult(
@@ -224,6 +226,7 @@ class HashExtractor:
                 hash_string=None,
                 file_type=file_type,
                 hash_type=None,
+                command_line=command_line,
                 error_message=output
             )
 

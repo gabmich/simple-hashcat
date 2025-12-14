@@ -59,6 +59,7 @@ class CrackerBackend(ABC):
         self.status = CrackStatus.IDLE
         self.progress_callback: Optional[Callable[[CrackProgress], None]] = None
         self.process = None
+        self.last_command: Optional[str] = None
 
     @abstractmethod
     def is_available(self) -> bool:

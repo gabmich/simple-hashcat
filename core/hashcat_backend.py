@@ -7,6 +7,7 @@ import os
 import re
 import threading
 import time
+import shlex
 from typing import Optional
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -42,7 +43,9 @@ class HashcatBackend(CrackerBackend):
         self._current_config: Optional[CrackConfig] = None
         self._found_password: Optional[str] = None
         self._last_status: dict = {}
+        self._error_lines: list[str] = []
         self._data_dir = Path(__file__).resolve().parent.parent / ".hashcat_data"
+        self._last_error: Optional[str] = None
         self._data_dir.mkdir(parents=True, exist_ok=True)
         (self._data_dir / "cache").mkdir(parents=True, exist_ok=True)
 
@@ -95,18 +98,15 @@ class HashcatBackend(CrackerBackend):
         self._found_password = None
         self._stop_monitoring.clear()
         self._last_status = {}
+        self._last_error = None
+        self._error_lines = []
 
         # Create temp file for hash
         with NamedTemporaryFile(delete=False, suffix=".hash", mode="w") as tmp_hash:
             self.temp_hash_file = tmp_hash.name
 
         # Clean hash string (remove filename prefix if present)
-        hash_string = config.hash_string
-        if ':' in hash_string and not hash_string.startswith('$'):
-            # Format might be "filename:hash" from john tools
-            parts = hash_string.split(':', 1)
-            if len(parts) == 2 and '$' in parts[1]:
-                hash_string = parts[1]
+        hash_string = self._sanitize_hash(config.hash_string)
 
         with open(self.temp_hash_file, 'w') as f:
             f.write(hash_string)
@@ -182,6 +182,7 @@ class HashcatBackend(CrackerBackend):
             cmd.append(mask)
 
         try:
+            self.last_command = shlex.join(cmd)
             self.process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -217,6 +218,29 @@ class HashcatBackend(CrackerBackend):
         char = charset_map.get(config.charset, "?a")
         return char * config.max_length
 
+    def _sanitize_hash(self, hash_string: str) -> str:
+        """
+        Normalize *2john output for hashcat.
+
+        Many *2john scripts emit "filename:HASH:::::filepath" which hashcat rejects.
+        Keep only the hash part after the first colon and drop trailing metadata.
+        """
+        cleaned = hash_string.strip()
+
+        # If it already starts with a $type$, leave leading part intact.
+        if cleaned.startswith('$'):
+            return cleaned
+
+        # Drop leading filename/label before the first colon.
+        if ':' in cleaned:
+            _, cleaned = cleaned.split(':', 1)
+
+        # Remove trailing metadata separators (:::::something)
+        if ':::::' in cleaned:
+            cleaned = cleaned.split(':::::', 1)[0]
+
+        return cleaned.strip()
+
     def _monitor_process(self):
         """Monitor the cracking process in background."""
         while not self._stop_monitoring.is_set():
@@ -231,6 +255,8 @@ class HashcatBackend(CrackerBackend):
                     for stream in ready:
                         line = stream.readline()
                         if line:
+                            if stream is self.process.stderr:
+                                self._error_lines.append(line.strip())
                             self._parse_status_line(line.strip())
             except Exception:
                 pass
@@ -238,10 +264,23 @@ class HashcatBackend(CrackerBackend):
             # Check if process is still running
             poll = self.process.poll()
             if poll is not None:
+                try:
+                    out, err = self.process.communicate(timeout=0.5)
+                    if err:
+                        self._error_lines.append(err.strip())
+                except Exception:
+                    pass
                 # Process finished
                 self._check_result()
-                self.status = CrackStatus.COMPLETED
-                self._last_status.setdefault('progress', 100.0)
+                if poll != 0 and not self._found_password:
+                    self.status = CrackStatus.FAILED
+                    if self._error_lines:
+                        self._last_error = "\n".join(
+                            [l for l in self._error_lines if l.strip()]
+                        )
+                else:
+                    self.status = CrackStatus.COMPLETED
+                    self._last_status.setdefault('progress', 100.0)
                 self._notify_progress(self.get_progress())
                 break
 
@@ -368,7 +407,8 @@ class HashcatBackend(CrackerBackend):
             estimated_time=self._last_status.get('eta', 'N/A'),
             candidates_tried=0,
             current_candidate="",
-            password_found=self._found_password
+            password_found=self._found_password,
+            error_message=self._last_error
         )
 
         return progress

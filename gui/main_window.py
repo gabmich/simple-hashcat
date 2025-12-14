@@ -25,6 +25,7 @@ class CrackWorker(QThread):
 
     progress_updated = Signal(object)  # CrackProgress
     finished = Signal(bool, str)  # success, message
+    command_ready = Signal(str)  # command line used
 
     def __init__(self, backend: CrackerBackend, config: CrackConfig):
         super().__init__()
@@ -40,6 +41,9 @@ class CrackWorker(QThread):
             self.finished.emit(False, "Failed to start cracking")
             return
 
+        if self.backend.last_command:
+            self.command_ready.emit(self.backend.last_command)
+
         # Wait for completion
         while self.backend.status == CrackStatus.RUNNING and not self._stop_requested:
             self.msleep(500)
@@ -49,6 +53,10 @@ class CrackWorker(QThread):
             self.finished.emit(True, f"Password found: {progress.password_found}")
         elif self._stop_requested:
             self.finished.emit(False, "Cracking stopped by user")
+        elif progress.error_message:
+            self.finished.emit(False, progress.error_message)
+        elif self.backend.status == CrackStatus.FAILED:
+            self.finished.emit(False, "Cracking failed")
         else:
             self.finished.emit(False, "Password not found")
 
@@ -156,12 +164,13 @@ class MainWindow(QMainWindow):
         self.backend_group.addButton(self.hashcat_radio, 1)
         self.john_radio.setChecked(True)
 
-        backend_layout.addWidget(self.john_radio)
-        backend_layout.addWidget(self.hashcat_radio)
-
         self.john_status = QLabel()
         self.hashcat_status = QLabel()
+
+        # Place each status label next to its corresponding backend toggle.
+        backend_layout.addWidget(self.john_radio)
         backend_layout.addWidget(self.john_status)
+        backend_layout.addWidget(self.hashcat_radio)
         backend_layout.addWidget(self.hashcat_status)
         backend_layout.addStretch()
 
@@ -322,6 +331,16 @@ class MainWindow(QMainWindow):
         stats_layout.addStretch()
         progress_layout.addLayout(stats_layout)
 
+        # Active command display
+        cmd_layout = QHBoxLayout()
+        cmd_layout.addWidget(QLabel("Command:"))
+        self.command_edit = QLineEdit()
+        self.command_edit.setReadOnly(True)
+        self.command_edit.setStyleSheet("QLineEdit { font-family: Monospace; }")
+        self.command_edit.setMinimumWidth(200)
+        cmd_layout.addWidget(self.command_edit)
+        progress_layout.addLayout(cmd_layout)
+
         bottom_layout.addWidget(progress_group)
 
         # Result section
@@ -478,6 +497,9 @@ class MainWindow(QMainWindow):
         result = self.hash_extractor.extract_hash(file_path)
         self.current_hash_result = result
 
+        if result.command_line:
+            self._set_current_command(result.command_line)
+
         if result.success:
             self.hash_edit.setText(result.hash_string)
             self.file_type_label.setText(result.file_type.value)
@@ -580,11 +602,13 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.password_edit.setText("")
         self.status_label.setText("Running...")
+        self._set_current_command("")
 
         # Start worker thread
         self.crack_worker = CrackWorker(self.current_backend, config)
         self.crack_worker.progress_updated.connect(self._on_progress)
         self.crack_worker.finished.connect(self._on_crack_finished)
+        self.crack_worker.command_ready.connect(self._on_command_ready)
         self.crack_worker.start()
 
     def _stop_crack(self):
@@ -603,6 +627,8 @@ class MainWindow(QMainWindow):
 
         if progress.password_found:
             self.password_edit.setText(progress.password_found)
+        if progress.error_message:
+            self._log(progress.error_message)
 
     @Slot(bool, str)
     def _on_crack_finished(self, success: bool, message: str):
@@ -616,11 +642,21 @@ class MainWindow(QMainWindow):
             self._log(f"SUCCESS: {message}")
             QMessageBox.information(self, "Password Found!", message)
         else:
-            self.status_label.setText("Not found")
+            label = "Error" if (self.current_backend and self.current_backend.status == CrackStatus.FAILED) else "Not found"
+            self.status_label.setText(label)
             self.status_label.setStyleSheet("color: red; font-weight: bold;")
             self._log(f"FINISHED: {message}")
+            if label == "Error":
+                QMessageBox.warning(self, "Cracking Failed", message)
 
         self.crack_worker = None
+
+    @Slot(str)
+    def _on_command_ready(self, cmd: str):
+        """Display the currently running command."""
+        self._set_current_command(cmd)
+        if cmd:
+            self._log(f"Command: {cmd}")
 
     def _copy_password(self):
         """Copy password to clipboard."""
@@ -665,6 +701,10 @@ class MainWindow(QMainWindow):
         from datetime import datetime
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_edit.append(f"[{timestamp}] {message}")
+
+    def _set_current_command(self, cmd: str):
+        """Show current command line."""
+        self.command_edit.setText(cmd)
 
     def closeEvent(self, event):
         """Handle window close."""
