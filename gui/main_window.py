@@ -711,16 +711,21 @@ class MainWindow(QMainWindow):
         self.speed_label.setObjectName("statusValue")
         stats_grid.addWidget(self.speed_label, 0, 1)
 
-        stats_grid.addWidget(QLabel("ETA:"), 1, 0)
+        stats_grid.addWidget(QLabel("Tried:"), 1, 0)
+        self.tried_label = QLabel("--")
+        self.tried_label.setObjectName("statusValue")
+        stats_grid.addWidget(self.tried_label, 1, 1)
+
+        stats_grid.addWidget(QLabel("ETA:"), 2, 0)
         self.eta_label = QLabel("--")
         self.eta_label.setObjectName("statusValue")
-        stats_grid.addWidget(self.eta_label, 1, 1)
+        stats_grid.addWidget(self.eta_label, 2, 1)
 
-        stats_grid.addWidget(QLabel("Status:"), 2, 0)
+        stats_grid.addWidget(QLabel("Status:"), 3, 0)
         self.status_label = QLabel("Idle")
         self.status_label.setObjectName("statusValue")
         self.status_label.setStyleSheet("color: #666666; font-weight: bold;")
-        stats_grid.addWidget(self.status_label, 2, 1)
+        stats_grid.addWidget(self.status_label, 3, 1)
 
         progress_layout.addLayout(stats_grid)
         layout.addWidget(progress_group)
@@ -1071,11 +1076,25 @@ class MainWindow(QMainWindow):
             self._log("Stopping...")
             self.crack_worker.stop()
 
+    def _format_count(self, count: int) -> str:
+        """Format a count with K/M/G/T suffix."""
+        if count < 1000:
+            return str(count)
+        elif count < 1_000_000:
+            return f"{count / 1000:.1f}K"
+        elif count < 1_000_000_000:
+            return f"{count / 1_000_000:.2f}M"
+        elif count < 1_000_000_000_000:
+            return f"{count / 1_000_000_000:.2f}G"
+        else:
+            return f"{count / 1_000_000_000_000:.2f}T"
+
     @Slot(object)
     def _on_progress(self, progress: CrackProgress):
         """Handle progress update."""
         self.progress_bar.setValue(int(progress.progress_percent))
         self.speed_label.setText(progress.speed or "--")
+        self.tried_label.setText(self._format_count(progress.candidates_tried) if progress.candidates_tried > 0 else "--")
         self.eta_label.setText(progress.estimated_time or "--")
         self.status_label.setText(progress.status.value)
 

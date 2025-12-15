@@ -135,9 +135,8 @@ class HashcatBackend(CrackerBackend):
         cmd.extend(["--potfile-path", self.potfile])
 
         # Status and machine readable output
-        cmd.extend(["--status", "--status-timer=1"])
+        cmd.extend(["--status", "--status-timer=2"])
         cmd.append("--machine-readable")
-        cmd.append("--quiet")
 
         # Force CPU if no GPU (fallback)
         cmd.append("--force")
@@ -348,26 +347,62 @@ class HashcatBackend(CrackerBackend):
 
     def _parse_status_line(self, line: str):
         """Parse hashcat status output."""
-        # Machine readable format: STATUS\t...\tvalue
+        # Machine readable format: STATUS\t6\tSPEED\t123456\t1000\tPROGRESS\tdone\ttotal\t...
+        # Format is KEY\tVALUE pairs, some values span multiple fields
         if line.startswith("STATUS"):
             parts = line.split('\t')
-            for i, part in enumerate(parts):
-                if part == "PROGRESS" and i + 1 < len(parts):
+            i = 0
+            while i < len(parts):
+                part = parts[i]
+                if part == "PROGRESS" and i + 2 < len(parts):
                     try:
-                        progress_parts = parts[i + 1].split('/')
-                        if len(progress_parts) >= 2:
-                            done = int(progress_parts[0])
-                            total = int(progress_parts[1])
-                            if total > 0:
-                                self._last_status['progress'] = (done / total) * 100
+                        done = int(parts[i + 1])
+                        total = int(parts[i + 2])
+                        self._last_status['candidates_tried'] = done
+                        self._last_status['candidates_total'] = total
+                        if total > 0:
+                            self._last_status['progress'] = (done / total) * 100
+                        i += 3
+                        continue
                     except ValueError:
                         pass
-                elif part == "SPEED" and i + 1 < len(parts):
-                    self._last_status['speed'] = parts[i + 1]
-                elif part in ("ETA", "TIME_EST", "TIME.REMAINING") and i + 1 < len(parts):
-                    self._last_status['eta'] = parts[i + 1]
+                elif part == "SPEED" and i + 2 < len(parts):
+                    try:
+                        # SPEED is in H/s, second field is divisor (usually 1000)
+                        speed_val = int(parts[i + 1])
+                        # Format speed nicely
+                        if speed_val >= 1_000_000_000:
+                            self._last_status['speed'] = f"{speed_val / 1_000_000_000:.2f} GH/s"
+                        elif speed_val >= 1_000_000:
+                            self._last_status['speed'] = f"{speed_val / 1_000_000:.2f} MH/s"
+                        elif speed_val >= 1_000:
+                            self._last_status['speed'] = f"{speed_val / 1_000:.2f} KH/s"
+                        else:
+                            self._last_status['speed'] = f"{speed_val} H/s"
+                        i += 3
+                        continue
+                    except ValueError:
+                        pass
                 elif part == "EXEC_RUNTIME" and i + 1 < len(parts):
-                    self._last_status['runtime'] = parts[i + 1]
+                    try:
+                        runtime_secs = float(parts[i + 1])
+                        # Calculate ETA from progress
+                        progress = self._last_status.get('progress', 0)
+                        if progress > 0 and progress < 100:
+                            remaining = runtime_secs * (100 - progress) / progress
+                            mins, secs = divmod(int(remaining), 60)
+                            hours, mins = divmod(mins, 60)
+                            if hours > 0:
+                                self._last_status['eta'] = f"{hours}h {mins}m {secs}s"
+                            elif mins > 0:
+                                self._last_status['eta'] = f"{mins}m {secs}s"
+                            else:
+                                self._last_status['eta'] = f"{secs}s"
+                        i += 2
+                        continue
+                    except ValueError:
+                        pass
+                i += 1
 
     def _check_result(self):
         """Check if password was found in output file."""
@@ -456,7 +491,7 @@ class HashcatBackend(CrackerBackend):
             progress_percent=pct,
             speed=self._last_status.get('speed', 'N/A'),
             estimated_time=self._last_status.get('eta', 'N/A'),
-            candidates_tried=0,
+            candidates_tried=self._last_status.get('candidates_tried', 0),
             current_candidate="",
             password_found=self._found_password,
             error_message=self._last_error

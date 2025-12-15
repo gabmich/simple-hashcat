@@ -311,6 +311,7 @@ class JohnBackend(CrackerBackend):
 
             # Parse progress info
             # Example: "0g 0:00:00:01 3/3 0g/s 1234Kp/s"
+            # Example: "0g 0:00:00:05 0.50% (ETA: 12:34:56) 0g/s 5000p/s"
             speed_match = re.search(r'(\d+\.?\d*[KMG]?p/s)', output)
             if speed_match:
                 progress.speed = speed_match.group(1)
@@ -324,6 +325,31 @@ class JohnBackend(CrackerBackend):
             eta_match = re.search(r'ETA:\s*([^\s]+)', output)
             if eta_match:
                 progress.estimated_time = eta_match.group(1)
+
+            # Parse candidates tried from "Xg" or "Xc" format, or estimate from speed and time
+            # John outputs like "0g 0:00:00:05" where time is H:MM:SS:ss or similar
+            # Try to estimate candidates from speed * time
+            time_match = re.search(r'(\d+):(\d+):(\d+):(\d+)', output)
+            if time_match and speed_match:
+                try:
+                    hours = int(time_match.group(1))
+                    mins = int(time_match.group(2))
+                    secs = int(time_match.group(3))
+                    total_secs = hours * 3600 + mins * 60 + secs
+
+                    speed_str = speed_match.group(1)
+                    # Parse speed like "1234Kp/s" or "5.5Mp/s"
+                    speed_val = float(re.search(r'[\d.]+', speed_str).group())
+                    if 'K' in speed_str:
+                        speed_val *= 1000
+                    elif 'M' in speed_str:
+                        speed_val *= 1000000
+                    elif 'G' in speed_str:
+                        speed_val *= 1000000000
+
+                    progress.candidates_tried = int(speed_val * total_secs)
+                except (ValueError, AttributeError):
+                    pass
 
         except Exception:
             pass
