@@ -272,22 +272,24 @@ class HashcatBackend(CrackerBackend):
         """
         Normalize *2john output for hashcat.
 
-        Many *2john scripts emit "filename:HASH:::::filepath" which hashcat rejects.
-        Keep only the hash part after the first colon and drop trailing metadata.
+        Many *2john scripts emit "filename:HASH:::::filepath" or "filename:HASH:::gecos::filepath"
+        which hashcat rejects. Keep only the hash part after the first colon and drop trailing metadata.
         """
         cleaned = hash_string.strip()
 
         # If it already starts with a $type$, leave leading part intact.
         if cleaned.startswith('$'):
-            return cleaned
+            # Still need to remove trailing John metadata (:::... or :::::...)
+            pass
+        else:
+            # Drop leading filename/label before the first colon.
+            if ':' in cleaned:
+                _, cleaned = cleaned.split(':', 1)
 
-        # Drop leading filename/label before the first colon.
-        if ':' in cleaned:
-            _, cleaned = cleaned.split(':', 1)
-
-        # Remove trailing metadata separators (:::::something)
-        if ':::::' in cleaned:
-            cleaned = cleaned.split(':::::', 1)[0]
+        # Remove trailing John metadata: formats like ":::gecos::path" or ":::::path"
+        # These appear after the actual hash content in *2john output.
+        # Look for 3+ consecutive colons which indicate metadata section.
+        cleaned = re.split(r':{3,}', cleaned)[0]
 
         return cleaned.strip()
 
@@ -322,7 +324,11 @@ class HashcatBackend(CrackerBackend):
                     pass
                 # Process finished
                 self._check_result()
-                if poll != 0 and not self._found_password:
+                # Hashcat exit codes:
+                # 0 = Cracked, 1 = Exhausted (not found), -1/255 = Error
+                # Exit code 1 means the wordlist was exhausted without finding the password
+                # This is not an error, just "password not found"
+                if poll not in (0, 1) and not self._found_password:
                     self.status = CrackStatus.FAILED
                     if self._error_lines:
                         self._last_error = "\n".join(
