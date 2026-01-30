@@ -27,6 +27,7 @@ class FileType(Enum):
     BITLOCKER = "bitlocker"
     TRUECRYPT = "truecrypt"
     LUKS = "luks"
+    PGP_SDA = "pgp_sda"  # PGP Self-Decrypting Archive (.exe)
     UNKNOWN = "unknown"
 
 
@@ -82,6 +83,7 @@ class HashExtractor:
         FileType.BITLOCKER: "bitlocker2john.py",
         FileType.TRUECRYPT: "truecrypt2john.py",
         FileType.LUKS: "luks2john.py",
+        FileType.PGP_SDA: "pgpsda2john.py",
     }
 
     # Hashcat mode mapping
@@ -132,6 +134,21 @@ class HashExtractor:
                 magic = f.read(6)
                 if magic == b'LUKS\xba\xbe':
                     return FileType.LUKS
+        except Exception:
+            pass
+
+        # Check for PGP SDA (Self-Decrypting Archive) - Windows PE with PGPsda signature
+        try:
+            with open(file_path, 'rb') as f:
+                header = f.read(2)
+                if header == b'MZ':  # PE executable
+                    # PGPsda signature can be deep in the file, read up to 512KB
+                    f.seek(0)
+                    file_size = os.path.getsize(file_path)
+                    read_size = min(file_size, 512 * 1024)
+                    content = f.read(read_size)
+                    if b'PGPsda' in content or b'PGPSDA' in content:
+                        return FileType.PGP_SDA
         except Exception:
             pass
 
@@ -211,6 +228,9 @@ class HashExtractor:
         success, output, command_line = self.john_manager.run_script(script_name, file_path)
 
         if success:
+            # Clean up output for certain formats
+            output = self._clean_hash_output(file_type, output)
+
             # Detect specific hash type for hashcat
             hash_type = self._detect_hashcat_mode(file_type, output)
 
@@ -231,6 +251,16 @@ class HashExtractor:
                 error_message=output
             )
 
+    def _clean_hash_output(self, file_type: FileType, output: str) -> str:
+        """Clean up script output to extract only the hash line."""
+        if file_type == FileType.PGP_SDA:
+            # pgpsda2john.py outputs a warning message before the hash
+            # Extract only the line containing $pgpsda$
+            for line in output.split('\n'):
+                if '$pgpsda$' in line:
+                    return line.strip()
+        return output
+
     def _detect_hashcat_mode(self, file_type: FileType, hash_output: str) -> str:
         """Detect the specific hashcat mode from hash output."""
         base_mode = self.HASHCAT_MODES.get(file_type, "0")
@@ -243,9 +273,18 @@ class HashExtractor:
                 return "12500"
 
         elif file_type == FileType.PDF:
-            if "$pdf$5" in hash_output:
-                return "10600"  # PDF 1.7 Level 3
-            elif "$pdf$4" in hash_output or "$pdf$2" in hash_output:
+            # PDF hash format: $pdf$V*R*...
+            # V=5,R=6 -> 10700 (PDF 1.7 Level 8, Acrobat 10-11)
+            # V=5,R=5 -> 10600 (PDF 1.7 Level 3, Acrobat 9)
+            # V=4 or V=2 -> 10500 (PDF 1.4-1.6)
+            # V=1 -> 10400 (PDF 1.1-1.3)
+            if "$pdf$5*6*" in hash_output:
+                return "10700"  # PDF 1.7 Level 8 (Acrobat 10-11)
+            elif "$pdf$5*5*" in hash_output:
+                return "10600"  # PDF 1.7 Level 3 (Acrobat 9)
+            elif "$pdf$4*" in hash_output or "$pdf$2*" in hash_output:
+                return "10500"  # PDF 1.4-1.6
+            elif "$pdf$1*" in hash_output:
                 return "10400"  # PDF 1.1-1.3
 
         elif file_type == FileType.ODF:
@@ -287,6 +326,7 @@ class HashExtractor:
             ("GPG encrypted files", "*.gpg *.pgp"),
             ("BitLocker volumes", "*.bek"),
             ("TrueCrypt volumes", "*.tc"),
+            ("PGP Self-Decrypting Archives", "*.exe"),
             ("All files", "*"),
         ]
 

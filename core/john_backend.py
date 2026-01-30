@@ -34,7 +34,21 @@ class JohnBackend(CrackerBackend):
 
     def _find_john(self) -> Optional[str]:
         """Find John the Ripper executable."""
-        paths = ["john", "/usr/bin/john", "/usr/sbin/john", "/usr/local/bin/john"]
+        # Prioritize john-jumbo from project resources or JOHN_JUMBO_RUN_PATH
+        project_john = Path(__file__).resolve().parent.parent / "resources" / "john-jumbo" / "john-bleeding-jumbo" / "run" / "john"
+        env_john_path = os.environ.get("JOHN_JUMBO_RUN_PATH")
+
+        paths = []
+        # First: project's compiled john-jumbo
+        if project_john.exists():
+            paths.append(str(project_john))
+        # Second: JOHN_JUMBO_RUN_PATH environment variable
+        if env_john_path:
+            env_john = Path(env_john_path) / "john"
+            if env_john.exists():
+                paths.append(str(env_john))
+        # Last: system paths (may not support all formats)
+        paths.extend(["john", "/usr/bin/john", "/usr/sbin/john", "/usr/local/bin/john"])
 
         for path in paths:
             try:
