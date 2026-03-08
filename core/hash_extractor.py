@@ -4,6 +4,8 @@ Uses john-jumbo's *2john utilities for reliable hash extraction.
 """
 
 import os
+import math
+import collections
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
@@ -26,6 +28,7 @@ class FileType(Enum):
     GPG = "gpg"
     BITLOCKER = "bitlocker"
     TRUECRYPT = "truecrypt"
+    VERACRYPT = "veracrypt"
     LUKS = "luks"
     PGP_SDA = "pgp_sda"  # PGP Self-Decrypting Archive (.exe)
     UNKNOWN = "unknown"
@@ -66,9 +69,11 @@ class HashExtractor:
         '.pgp': FileType.GPG,
         '.bek': FileType.BITLOCKER,
         '.tc': FileType.TRUECRYPT,
+        '.hc': FileType.VERACRYPT,
     }
 
     # Mapping of FileType to john-jumbo script name
+    # TrueCrypt/VeraCrypt are handled directly (header extraction), no *2john script needed.
     SCRIPT_MAP = {
         FileType.ZIP: "zip2john",
         FileType.SEVEN_ZIP: "7z2john.pl",
@@ -81,7 +86,6 @@ class HashExtractor:
         FileType.SSH_KEY: "ssh2john.py",
         FileType.GPG: "gpg2john.py",
         FileType.BITLOCKER: "bitlocker2john.py",
-        FileType.TRUECRYPT: "truecrypt2john.py",
         FileType.LUKS: "luks2john.py",
         FileType.PGP_SDA: "pgpsda2john.py",
     }
@@ -99,7 +103,8 @@ class HashExtractor:
         FileType.SSH_KEY: "22911",
         FileType.GPG: "17010",
         FileType.BITLOCKER: "22100",
-        FileType.TRUECRYPT: "6211",
+        FileType.TRUECRYPT: "6211",  # RIPEMD160 + AES (default, most common)
+        FileType.VERACRYPT: "13711",  # RIPEMD160 + AES (default, most common)
     }
 
     def __init__(self):
@@ -152,6 +157,12 @@ class HashExtractor:
         except Exception:
             pass
 
+        # Check for TrueCrypt/VeraCrypt volume (no magic bytes by design).
+        # Heuristic: file size >= 19456 bytes (minimum TC volume), multiple of 512,
+        # and high Shannon entropy in the first 512 bytes (encrypted header).
+        if self._looks_like_encrypted_volume(file_path):
+            return FileType.TRUECRYPT
+
         return FileType.UNKNOWN
 
     def extract_hash(self, file_path: str) -> HashResult:
@@ -165,19 +176,23 @@ class HashExtractor:
                 error_message=f"File not found: {file_path}"
             )
 
+        file_type = self.detect_file_type(file_path)
+
+        # TrueCrypt/VeraCrypt: hashcat reads the volume header directly, no *2john needed
+        if file_type in (FileType.TRUECRYPT, FileType.VERACRYPT):
+            return self._extract_tc_vc_hash(file_path, file_type)
+
         if not self.is_ready():
             return HashResult(
                 success=False,
                 hash_string=None,
-                file_type=FileType.UNKNOWN,
+                file_type=file_type,
                 hash_type=None,
                 error_message=(
                     "john-jumbo not installed. Point JOHN_JUMBO_RUN_PATH to your john/run directory "
                     "or place john sources under project root (e.g. john-1.9.0-jumbo-1/run)."
                 )
             )
-
-        file_type = self.detect_file_type(file_path)
 
         if file_type == FileType.UNKNOWN:
             return HashResult(
@@ -326,9 +341,98 @@ class HashExtractor:
             ("GPG encrypted files", "*.gpg *.pgp"),
             ("BitLocker volumes", "*.bek"),
             ("TrueCrypt volumes", "*.tc"),
+            ("VeraCrypt volumes", "*.hc"),
             ("PGP Self-Decrypting Archives", "*.exe"),
             ("All files", "*"),
         ]
+
+    def _looks_like_encrypted_volume(self, file_path: str) -> bool:
+        """
+        Heuristic to detect TrueCrypt/VeraCrypt volumes.
+        These have no magic bytes by design, so we check:
+        - File size >= 19456 bytes (minimum TC volume) and multiple of 512
+        - High Shannon entropy in the first 512 bytes (encrypted data)
+        - No known magic bytes (not a recognized file format)
+        """
+        try:
+            file_size = os.path.getsize(file_path)
+            if file_size < 19456 or file_size % 512 != 0:
+                return False
+
+            with open(file_path, 'rb') as f:
+                header = f.read(512)
+
+            if len(header) < 512:
+                return False
+
+            # Reject files with known magic bytes
+            known_magics = [
+                b'PK',        # ZIP
+                b'7z',        # 7z
+                b'Rar!',      # RAR
+                b'%PDF',      # PDF
+                b'\xd0\xcf',  # OLE (old Office)
+                b'MZ',        # PE executable
+                b'\x89PNG',   # PNG
+                b'\xff\xd8',  # JPEG
+                b'LUKS',      # LUKS
+            ]
+            for magic in known_magics:
+                if header[:len(magic)] == magic:
+                    return False
+
+            # Calculate Shannon entropy
+            freqs = collections.Counter(header)
+            entropy = -sum(
+                (count / 512) * math.log2(count / 512)
+                for count in freqs.values()
+            )
+
+            # Encrypted data typically has entropy > 7.0 bits/byte (max is 8.0)
+            return entropy >= 7.0
+
+        except Exception:
+            return False
+
+    def _extract_tc_vc_hash(self, file_path: str, file_type: FileType) -> HashResult:
+        """
+        Extract hash for TrueCrypt/VeraCrypt volumes.
+        Hashcat reads the volume header directly (first 512 bytes).
+        We just extract it and pass the file path to hashcat.
+        """
+        try:
+            file_size = os.path.getsize(file_path)
+            with open(file_path, 'rb') as f:
+                header = f.read(512)
+
+            if len(header) < 512:
+                return HashResult(
+                    success=False,
+                    hash_string=None,
+                    file_type=file_type,
+                    hash_type=None,
+                    error_message="File too small to be a TrueCrypt/VeraCrypt volume"
+                )
+
+            hash_type = self._detect_hashcat_mode(file_type, "")
+            label = "TrueCrypt" if file_type == FileType.TRUECRYPT else "VeraCrypt"
+
+            return HashResult(
+                success=True,
+                hash_string=file_path,  # hashcat reads the file directly
+                file_type=file_type,
+                hash_type=hash_type,
+                command_line=f"# {label} volume detected ({file_size / (1024*1024):.0f} MB)"
+            )
+
+        except Exception as e:
+            return HashResult(
+                success=False,
+                hash_string=None,
+                file_type=file_type,
+                hash_type=None,
+                error_message=str(e)
+            )
 
     def _is_encrypted_container(self, file_path: str, file_type: FileType) -> Optional[bool]:
         """

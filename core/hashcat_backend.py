@@ -101,15 +101,19 @@ class HashcatBackend(CrackerBackend):
         self._last_error = None
         self._error_lines = []
 
-        # Create temp file for hash
-        with NamedTemporaryFile(delete=False, suffix=".hash", mode="w") as tmp_hash:
-            self.temp_hash_file = tmp_hash.name
+        # For TrueCrypt/VeraCrypt, hashcat reads the volume file directly
+        if config.hash_file_is_volume:
+            self.temp_hash_file = config.hash_string  # path to volume file, don't delete it
+        else:
+            # Create temp file for hash
+            with NamedTemporaryFile(delete=False, suffix=".hash", mode="w") as tmp_hash:
+                self.temp_hash_file = tmp_hash.name
 
-        # Clean hash string (remove filename prefix if present)
-        hash_string = self._sanitize_hash(config.hash_string)
+            # Clean hash string (remove filename prefix if present)
+            hash_string = self._sanitize_hash(config.hash_string)
 
-        with open(self.temp_hash_file, 'w') as f:
-            f.write(hash_string)
+            with open(self.temp_hash_file, 'w') as f:
+                f.write(hash_string)
 
         # Create session and output files
         self.session_name = f"simple_cracker_{os.getpid()}"
@@ -507,12 +511,15 @@ class HashcatBackend(CrackerBackend):
 
     def _cleanup(self):
         """Clean up temporary files."""
-        for f in [self.temp_hash_file]:
-            if f and os.path.exists(f):
-                try:
-                    os.remove(f)
-                except Exception:
-                    pass
+        # Don't delete volume files (TC/VC) — only temp hash files we created
+        is_volume = self._current_config and self._current_config.hash_file_is_volume
+        if not is_volume:
+            for f in [self.temp_hash_file]:
+                if f and os.path.exists(f):
+                    try:
+                        os.remove(f)
+                    except Exception:
+                        pass
         for f in [self.outfile, self.potfile]:
             if f and os.path.exists(f):
                 try:

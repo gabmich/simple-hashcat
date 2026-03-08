@@ -25,6 +25,8 @@ Outil GUI (PySide6) pour extraire des empreintes de fichiers protégés par mot 
 | MS Office | .doc, .docx, .xls, .xlsx, .ppt, .pptx | 9600, 9700 |
 | OpenDocument | .odt, .ods, .odp, .odg | 18400 |
 | KeePass | .kdbx, .kdb | 13400 |
+| TrueCrypt | .tc, (auto-detect) | 6211-6243 |
+| VeraCrypt | .hc, (auto-detect) | 13711-13771 |
 | Clés SSH | - | 22911 |
 | GPG | .gpg, .pgp | 17010 |
 

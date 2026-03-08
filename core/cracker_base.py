@@ -51,6 +51,7 @@ class CrackConfig:
     charset: str = "?a"  # For brute force: ?l=lower, ?u=upper, ?d=digit, ?s=special, ?a=all
     custom_charset: Optional[str] = None  # Custom charset: "wk", "a-z", "a-zA-Z0-9", etc.
     increment: bool = False
+    hash_file_is_volume: bool = False  # True for TC/VC: hash_string is a file path, not a hash
 
 
 class CrackerBackend(ABC):

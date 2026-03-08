@@ -311,6 +311,14 @@ class CrackWorker(QThread):
     progress_updated = Signal(object)  # CrackProgress
     finished = Signal(bool, str)  # success, message
     command_ready = Signal(str)  # command line used
+    log_message = Signal(str)  # log messages
+
+    # TrueCrypt / VeraCrypt mode lists for auto-detection
+    TC_MODES = ["6211", "6212", "6213", "6221", "6222", "6223",
+                "6231", "6232", "6233", "6241", "6242", "6243"]
+    VC_MODES = ["13711", "13712", "13713", "13721", "13722", "13723",
+                "13731", "13732", "13733", "13751", "13752", "13753",
+                "13761", "13771", "13772", "13773"]
 
     def __init__(self, backend: CrackerBackend, config: CrackConfig):
         super().__init__()
@@ -319,6 +327,15 @@ class CrackWorker(QThread):
         self._stop_requested = False
 
     def run(self):
+        # Auto TC/VC mode: try each hashcat mode sequentially
+        if self.config.hash_type in ("auto_tc", "auto_vc"):
+            self._run_auto_tc_vc()
+            return
+
+        self._run_single()
+
+    def _run_single(self):
+        """Run a single cracking attempt."""
         self.backend.set_progress_callback(self._on_progress)
         success = self.backend.start_crack(self.config)
 
@@ -344,6 +361,59 @@ class CrackWorker(QThread):
             self.finished.emit(False, "Cracking failed")
         else:
             self.finished.emit(False, "Password not found")
+
+    def _run_auto_tc_vc(self):
+        """Try all TrueCrypt or VeraCrypt hashcat modes sequentially."""
+        import copy
+        modes = self.TC_MODES if self.config.hash_type == "auto_tc" else self.VC_MODES
+        label = "TrueCrypt" if self.config.hash_type == "auto_tc" else "VeraCrypt"
+
+        self.log_message.emit(f"Auto mode: trying {len(modes)} {label} algorithms sequentially...")
+
+        for i, mode in enumerate(modes):
+            if self._stop_requested:
+                self.finished.emit(False, "Cracking stopped by user")
+                return
+
+            self.log_message.emit(f"Trying mode {mode} ({i+1}/{len(modes)})...")
+
+            # Create a fresh config copy with the specific mode
+            config = copy.copy(self.config)
+            config.hash_type = mode
+
+            # Need a fresh backend instance to reset state
+            from core.hashcat_backend import HashcatBackend
+            backend = HashcatBackend()
+            backend.set_progress_callback(self._on_progress)
+
+            success = backend.start_crack(config)
+            if not success:
+                self.log_message.emit(f"Mode {mode}: failed to start, skipping")
+                continue
+
+            if backend.last_command:
+                self.command_ready.emit(backend.last_command)
+
+            # Wait for this attempt to complete
+            while backend.status == CrackStatus.RUNNING and not self._stop_requested:
+                self.msleep(500)
+
+            progress = backend.get_progress()
+            if progress.password_found:
+                self.log_message.emit(f"Mode {mode}: SUCCESS!")
+                self.finished.emit(True, f"Password found (mode {mode}): {progress.password_found}")
+                return
+
+            # Clean up before next attempt
+            if backend.status == CrackStatus.RUNNING:
+                backend.stop_crack()
+
+            self.log_message.emit(f"Mode {mode}: not found, next...")
+
+        if self._stop_requested:
+            self.finished.emit(False, "Cracking stopped by user")
+        else:
+            self.finished.emit(False, f"Password not found with any {label} algorithm")
 
     def _on_progress(self, progress: CrackProgress):
         self.progress_updated.emit(progress)
@@ -471,6 +541,47 @@ class MainWindow(QMainWindow):
         self.hash_type_label.setObjectName("statusValue")
         self.hash_type_label.setStyleSheet("color: #1976D2;")
         info_layout.addWidget(self.hash_type_label, 1, 1)
+
+        # TrueCrypt/VeraCrypt algorithm selector (hidden by default)
+        info_layout.addWidget(QLabel("Algorithm:"), 2, 0)
+        self.tc_algo_combo = QComboBox()
+        self.tc_algo_combo.addItems([
+            "Auto - Try all TrueCrypt modes",
+            "Auto - Try all VeraCrypt modes",
+            "TrueCrypt - RIPEMD160 + AES (6211)",
+            "TrueCrypt - RIPEMD160 + AES-Twofish (6212)",
+            "TrueCrypt - RIPEMD160 + AES-Twofish-Serpent (6213)",
+            "TrueCrypt - SHA512 + AES (6221)",
+            "TrueCrypt - SHA512 + AES-Twofish (6222)",
+            "TrueCrypt - SHA512 + AES-Twofish-Serpent (6223)",
+            "TrueCrypt - Whirlpool + AES (6231)",
+            "TrueCrypt - Whirlpool + AES-Twofish (6232)",
+            "TrueCrypt - Whirlpool + AES-Twofish-Serpent (6233)",
+            "TrueCrypt - RIPEMD160 + AES boot (6241)",
+            "TrueCrypt - RIPEMD160 + AES-Twofish boot (6242)",
+            "TrueCrypt - RIPEMD160 + AES-Twofish-Serpent boot (6243)",
+            "VeraCrypt - RIPEMD160 + AES (13711)",
+            "VeraCrypt - RIPEMD160 + AES-Twofish (13712)",
+            "VeraCrypt - RIPEMD160 + AES-Twofish-Serpent (13713)",
+            "VeraCrypt - SHA512 + AES (13721)",
+            "VeraCrypt - SHA512 + AES-Twofish (13722)",
+            "VeraCrypt - SHA512 + AES-Twofish-Serpent (13723)",
+            "VeraCrypt - Whirlpool + AES (13731)",
+            "VeraCrypt - Whirlpool + AES-Twofish (13732)",
+            "VeraCrypt - Whirlpool + AES-Twofish-Serpent (13733)",
+            "VeraCrypt - SHA256 + AES (13751)",
+            "VeraCrypt - SHA256 + AES-Twofish (13752)",
+            "VeraCrypt - SHA256 + AES-Twofish-Serpent (13753)",
+            "VeraCrypt - SHA256 + AES boot (13761)",
+            "VeraCrypt - Streebog-512 + AES (13771)",
+            "VeraCrypt - Streebog-512 + AES-Twofish (13772)",
+            "VeraCrypt - Streebog-512 + AES-Twofish-Serpent (13773)",
+        ])
+        self.tc_algo_combo.setVisible(False)
+        self.tc_algo_combo.currentIndexChanged.connect(self._on_tc_algo_changed)
+        info_layout.addWidget(self.tc_algo_combo, 2, 1)
+        self.tc_algo_label_ref = info_layout.itemAtPosition(2, 0).widget()
+        self.tc_algo_label_ref.setVisible(False)
 
         layout.addWidget(info_group)
 
@@ -903,6 +1014,30 @@ class MainWindow(QMainWindow):
         if is_custom:
             self.custom_charset_edit.setFocus()
 
+    # All TrueCrypt hashcat modes
+    TC_MODES = ["6211", "6212", "6213", "6221", "6222", "6223",
+                "6231", "6232", "6233", "6241", "6242", "6243"]
+    # All VeraCrypt hashcat modes
+    VC_MODES = ["13711", "13712", "13713", "13721", "13722", "13723",
+                "13731", "13732", "13733", "13751", "13752", "13753",
+                "13761", "13771", "13772", "13773"]
+
+    def _on_tc_algo_changed(self, index: int):
+        """Update hashcat mode when TC/VC algorithm is changed."""
+        if not self.current_hash_result:
+            return
+        import re
+        text = self.tc_algo_combo.currentText()
+        if text.startswith("Auto"):
+            self.current_hash_result.hash_type = "auto_tc" if "TrueCrypt" in text else "auto_vc"
+            self.hash_type_label.setText("Auto")
+        else:
+            match = re.search(r'\((\d+)\)$', text)
+            if match:
+                mode = match.group(1)
+                self.current_hash_result.hash_type = mode
+                self.hash_type_label.setText(mode)
+
     def _browse_file(self):
         """Browse for target file."""
         formats = self.hash_extractor.get_supported_formats()
@@ -947,8 +1082,31 @@ class MainWindow(QMainWindow):
         if result.command_line:
             self._set_current_command(result.command_line)
 
+        # Show/hide TC/VC algorithm selector
+        is_tc_vc = result.file_type in (FileType.TRUECRYPT, FileType.VERACRYPT)
+        self.tc_algo_combo.setVisible(is_tc_vc)
+        self.tc_algo_label_ref.setVisible(is_tc_vc)
+        if is_tc_vc:
+            if result.file_type == FileType.VERACRYPT:
+                # Pre-select "Auto - Try all VeraCrypt modes"
+                self.tc_algo_combo.setCurrentIndex(1)
+                result.hash_type = "auto_vc"
+            else:
+                # Pre-select "Auto - Try all TrueCrypt modes"
+                self.tc_algo_combo.setCurrentIndex(0)
+                result.hash_type = "auto_tc"
+
         if result.success:
-            self.hash_edit.setText(result.hash_string)
+            if is_tc_vc:
+                # For TC/VC, hash_string is the volume file path — show info instead
+                file_size = os.path.getsize(file_path)
+                self.hash_edit.setText(
+                    f"[Volume file: {file_size / (1024*1024):.0f} MB]\n"
+                    f"Hashcat will read the volume header directly.\n"
+                    f"Select the correct algorithm above."
+                )
+            else:
+                self.hash_edit.setText(result.hash_string)
             self.file_type_label.setText(result.file_type.value)
             self.hash_type_label.setText(result.hash_type or "Auto-detect")
             self._log(f"Hash extracted successfully. Type: {result.file_type.value}")
@@ -966,18 +1124,28 @@ class MainWindow(QMainWindow):
 
     def _get_attack_config(self) -> Optional[CrackConfig]:
         """Build attack configuration from UI."""
-        hash_string = self.hash_edit.toPlainText().strip()
+        if not self.current_hash_result or not self.current_hash_result.success:
+            QMessageBox.warning(self, "Error", "No hash to crack")
+            return None
+
+        is_tc_vc = self.current_hash_result.file_type in (FileType.TRUECRYPT, FileType.VERACRYPT)
+
+        if is_tc_vc:
+            # For TC/VC, hash_string is the volume file path
+            hash_string = self.current_hash_result.hash_string
+        else:
+            hash_string = self.hash_edit.toPlainText().strip()
+
         if not hash_string:
             QMessageBox.warning(self, "Error", "No hash to crack")
             return None
 
-        hash_type = None
-        if self.current_hash_result:
-            hash_type = self.current_hash_result.hash_type
+        hash_type = self.current_hash_result.hash_type
 
         config = CrackConfig(
             hash_string=hash_string,
-            hash_type=hash_type
+            hash_type=hash_type,
+            hash_file_is_volume=is_tc_vc,
         )
 
         # Determine attack mode from selected tab
@@ -1068,6 +1236,7 @@ class MainWindow(QMainWindow):
         self.crack_worker.progress_updated.connect(self._on_progress)
         self.crack_worker.finished.connect(self._on_crack_finished)
         self.crack_worker.command_ready.connect(self._on_command_ready)
+        self.crack_worker.log_message.connect(self._log)
         self.crack_worker.start()
 
     def _stop_crack(self):
